@@ -42,7 +42,7 @@ void serial_cb(const struct device *dev, void *user_data)
 	/* read until FIFO empty */
 	while (uart_fifo_read(uart_dev, &tmp, BYTES_TO_READ) == BYTES_TO_READ)
     {
-		if (tmp & 0xDEADBEEF)
+		if (tmp == 0xDEADBEEF)
         {
 			/* if queue is full, message is silently dropped */
 			k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
