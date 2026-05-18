@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include "osc.h"
+
 /* change this to any other UART peripheral if desired */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
 #define USB_UART_DEVICE_NODE DT_CHOSEN(zephyr_shell_uart)
@@ -19,6 +21,8 @@ static const struct device *const usb_uart_dev = DEVICE_DT_GET(USB_UART_DEVICE_N
 /* receive buffer used in UART ISR callback */
 static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
+
+static uint8_t testbuf[100];
 
 /*
  * Read individual bytes from UART until packet delimiter 0xDEADBEEF is detected.
@@ -109,11 +113,29 @@ int main(void)
 	//print_uart("Tell me something and press enter:\r\n");
 
 	/* indefinitely wait for input from the user */
-	while (k_msgq_get(&uart_msgq, &tx_buf, K_FOREVER) == 0) {
+	while (k_msgq_get(&uart_msgq, &tx_buf, K_FOREVER) == 0)
+	{
 		//print_uart("Echo: ");
 		print_uart(tx_buf);
 		//print_uart("\n");
 		printk("\n");
+
+		osc_msg msg;
+
+		if (osc_parse_message(&msg, rx_buf, MSG_SIZE) < 0)
+		{
+			printk("Chyba při parsování OSC zprávy.\n");
+			continue;
+		}
+		
+		printk("type tag: %s\n", msg.idx_type_tag);
+
+		for (int i = 0; i < 3; i++)
+		{
+			float testfloat;
+			memcpy(&testfloat, msg.idx_type_tag + 4 + 4*i, 4);
+			printf("argument: %f\n", testfloat); // must use printf instead of printk to print floats
+		}
 	}
 	return 0;
 }
