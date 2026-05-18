@@ -9,7 +9,6 @@
 #define USB_UART_DEVICE_NODE DT_CHOSEN(zephyr_shell_uart)
 
 #define MSG_SIZE 36
-#define BYTES_TO_READ 4
 
 /* queue to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
@@ -22,12 +21,13 @@ static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
 
 /*
- * Read characters from UART until line end is detected. Afterwards push the
- * data to the message queue.
+ * Read individual bytes from UART until packet delimiter 0xDEADBEEF is detected.
+ * Afterwards push the data to the message queue.
  */
 void serial_cb(const struct device *dev, void *user_data)
 {
-	uint32_t tmp;
+	static uint32_t shift_reg = 0;
+	uint8_t byte;
 
 	if (!uart_irq_update(uart_dev))
     {
@@ -40,22 +40,24 @@ void serial_cb(const struct device *dev, void *user_data)
 	}
 
 	/* read until FIFO empty */
-	while (uart_fifo_read(uart_dev, &tmp, BYTES_TO_READ) == BYTES_TO_READ)
+	while (uart_fifo_read(uart_dev, &byte, 1) == 1)
     {
-		if (tmp == 0xDEADBEEF)
+		/* shift existing bytes towards LSB by one byte, then write new byte */
+		shift_reg = (shift_reg >> 8) | ((uint32_t)byte << 24);
+
+		if (shift_reg == 0xDEADBEEF)
         {
+			printk("%x\n", shift_reg);
 			/* if queue is full, message is silently dropped */
 			k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
 
-			/* reset the buffer (it was copied to the msgq) */
+			/* reset the buffer position and shift register */
 			rx_buf_pos = 0;
+			shift_reg = 0;
 		}
-        else if (rx_buf_pos < (sizeof(rx_buf) - BYTES_TO_READ))
+        else if (rx_buf_pos < sizeof(rx_buf))
         {
-            for (int i = 0; i < BYTES_TO_READ; i++)
-            {
-                memcpy(&rx_buf[rx_buf_pos++], ((uint8_t *)&tmp) + i, 1);
-            }
+            rx_buf[rx_buf_pos++] = byte;
 		}
 		/* else: characters beyond buffer size are dropped */
 	}
