@@ -12,8 +12,13 @@
 
 #define MSG_SIZE 36
 
-/* queue to store up to 10 messages (aligned to 4-byte boundary) */
+/* queues to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
+K_MSGQ_DEFINE(osc_msgq, sizeof(osc_msg), 10, 4);
+
+/* thread to parse OSC messages from raw UART data */
+void parser_thread(void *, void *, void *);
+K_THREAD_DEFINE(parser_thread_id, 2048, parser_thread, NULL, NULL, NULL, 5, 0, 0); // may need to adjust priority and stack size
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 static const struct device *const usb_uart_dev = DEVICE_DT_GET(USB_UART_DEVICE_NODE);
@@ -22,13 +27,11 @@ static const struct device *const usb_uart_dev = DEVICE_DT_GET(USB_UART_DEVICE_N
 static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
 
-static uint8_t testbuf[100];
-
 /*
  * Read individual bytes from UART until packet delimiter 0xDEADBEEF is detected.
  * Afterwards push the data to the message queue.
  */
-void serial_cb(const struct device *dev, void *user_data)
+void uart_cb(const struct device *dev, void *user_data)
 {
 	static uint32_t shift_reg = 0;
 	uint8_t byte;
@@ -51,7 +54,8 @@ void serial_cb(const struct device *dev, void *user_data)
 
 		if (shift_reg == 0xDEADBEEF)
         {
-			printk("%x\n", shift_reg);
+			//printk("%x\n", shift_reg);
+
 			/* if queue is full, message is silently dropped */
 			k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
 
@@ -64,6 +68,28 @@ void serial_cb(const struct device *dev, void *user_data)
             rx_buf[rx_buf_pos++] = byte;
 		}
 		/* else: characters beyond buffer size are dropped */
+	}
+}
+
+/*
+ * Parse raw OSC message from UART and push it to the message queue.
+ */
+void parser_thread(void *, void *, void *)
+{
+	char raw_buf[MSG_SIZE];
+	osc_msg msg;
+
+	/* indefinitely wait until uart_msgq has data, should use no cpu while waiting */
+	while (k_msgq_get(&uart_msgq, &raw_buf, K_FOREVER) == 0)
+	{
+		if (osc_parse_message(&msg, (uint8_t *)raw_buf, MSG_SIZE) < 0)
+		{
+			printk("OSC message parse error.\n");
+			continue;
+		}
+
+		/* if queue is full, message is silently dropped */
+		k_msgq_put(&osc_msgq, &msg, K_NO_WAIT); // maybe it would be more reasonable to wait for space in queue?
 	}
 }
 
@@ -82,60 +108,54 @@ void print_uart(char *buf)
 
 int main(void)
 {
-	char tx_buf[MSG_SIZE];
-
-	if (!device_is_ready(uart_dev)) {
+	if (!device_is_ready(uart_dev))
+	{
 		printk("UART device not found!");
 		return 0;
 	}
 
-	if (!device_is_ready(usb_uart_dev)) {
+	if (!device_is_ready(usb_uart_dev))
+	{
 		printk("UART device not found!");
 		return 0;
 	}
 
 	/* configure interrupt and callback to receive data */
-	int ret = uart_irq_callback_user_data_set(uart_dev, serial_cb, NULL);
+	int ret = uart_irq_callback_user_data_set(uart_dev, uart_cb, NULL);
 
-	if (ret < 0) {
-		if (ret == -ENOTSUP) {
+	if (ret < 0)
+	{
+		if (ret == -ENOTSUP)
+		{
 			printk("Interrupt-driven UART API support not enabled\n");
-		} else if (ret == -ENOSYS) {
+		}
+		else if (ret == -ENOSYS)
+		{
 			printk("UART device does not support interrupt-driven API\n");
-		} else {
+		}
+		else
+		{
 			printk("Error setting UART callback: %d\n", ret);
 		}
 		return 0;
 	}
 	uart_irq_rx_enable(uart_dev);
 
-	//print_uart("Hello! I'm your echo bot.\r\n");
-	//print_uart("Tell me something and press enter:\r\n");
+	osc_msg msg;
 
-	/* indefinitely wait for input from the user */
-	while (k_msgq_get(&uart_msgq, &tx_buf, K_FOREVER) == 0)
+	/* indefinitely wait for input from UART peripheral */
+	while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
 	{
-		//print_uart("Echo: ");
-		print_uart(tx_buf);
-		//print_uart("\n");
-		printk("\n");
-
-		osc_msg msg;
-
-		if (osc_parse_message(&msg, rx_buf, MSG_SIZE) < 0)
-		{
-			printk("Chyba při parsování OSC zprávy.\n");
-			continue;
-		}
-		
-		printk("type tag: %s\n", msg.idx_type_tag);
+		printk("addr pattern: %s\n", osc_addr_pattern(&msg));
+		printk("type tag: %s\n", osc_type_tag(&msg));
 
 		for (int i = 0; i < 3; i++)
 		{
 			float testfloat;
-			memcpy(&testfloat, msg.idx_type_tag + 4 + 4*i, 4);
+			memcpy(&testfloat, osc_args(&msg) + 4*i, 4);
 			printf("argument: %f\n", testfloat); // must use printf instead of printk to print floats
 		}
 	}
+
 	return 0;
 }
