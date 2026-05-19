@@ -1,6 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <string.h>
 
@@ -77,7 +78,7 @@ void uart_cb(const struct device *dev, void *user_data)
 void parser_thread(void *, void *, void *)
 {
 	char raw_buf[MSG_SIZE];
-	osc_msg msg;
+	static osc_msg msg;
 
 	/* indefinitely wait until uart_msgq has data, should use no cpu while waiting */
 	while (k_msgq_get(&uart_msgq, &raw_buf, K_FOREVER) == 0)
@@ -141,18 +142,22 @@ int main(void)
 	}
 	uart_irq_rx_enable(uart_dev);
 
-	osc_msg msg;
+	static osc_msg msg;
 
 	/* indefinitely wait for input from UART peripheral */
 	while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
 	{
-		printk("addr pattern: %s\n", osc_addr_pattern(&msg));
+		printk("address pattern: %s\n", osc_addr_pattern(&msg));
 		printk("type tag: %s\n", osc_type_tag(&msg));
 
 		for (int i = 0; i < 3; i++)
 		{
+			uint32_t raw;
+			memcpy(&raw, osc_args(&msg) + 4*i, 4);
+			raw = sys_be32_to_cpu(raw); // convert from network big-endian to cpu byte order
+
 			float testfloat;
-			memcpy(&testfloat, osc_args(&msg) + 4*i, 4);
+			memcpy(&testfloat, &raw, 4);
 			printf("argument: %f\n", testfloat); // must use printf instead of printk to print floats
 		}
 	}

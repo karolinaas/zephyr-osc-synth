@@ -2,52 +2,84 @@
 
 #include <string.h>
 
-uint8_t test_buff[] = {'/', 'm', 'e', 's', 's', 'a', 'g', 'e', '\0', ',', 'i', '\0', '\0', 69, '\0', '\0', '\0', '\0'};
-//                               ^1^2  ^3
+// helper function
+static inline uint32_t osc_move4_up(uint32_t idx)
+{
+    return (idx + 3) & ~0x3; // move up to next multiple of 4
+}
+
 int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
 {
     // initial bound check
     if (raw_len > OSC_MSG_MAX_SIZE)
     {
-        return -1; // message too long
+        return -1; // raw buffer too long
     }
 
     memcpy(msg->msg_data, raw_buff, raw_len);
-    msg->msg_size = raw_len; // wrong, idk the size yet, i'd need to parse the message properly. this is a problem for future me
-    msg->idx_addr_pattern = 0; // rn we hope that the osc message is not prepended with its size lol, pray
+    msg->idx_addr_pattern = 0; // rn we hope that the osc message is not prepended with its size (some non-standard implementations)
 
-    int32_t i = 0;
+    uint32_t i = 0;
 
-    // iterace přes buffer, dokud nenajdeme ',', což značí začátek OSC type tag stringu ^1
-    for (; raw_buff[i] != ','; i++)
+    // iterate through address pattern until null char
+    while (i < raw_len && raw_buff[i] != '\0')
     {
-        if (i >= raw_len)
+        i++;
+    }
+    if (i >= raw_len)
+    {
+        return -1; // address pattern not null terminated
+    }
+
+    i = osc_move4_up(i + 1); // move up to next multiple of 4 after null char
+
+    if (i >= raw_len)
+    {
+        return -1; // address pattern padding overflows the raw buffer (should be impossible, malformed message)
+    }
+
+    if (raw_buff[i] != ',')
+    {
+        return -1; // missing/malformed type tag string
+    }
+
+    msg->idx_type_tag = i + 1; // type tag string starts after ','
+
+    // iterate through type tag string until null char
+    while (i < raw_len && raw_buff[i] != '\0')
+    {
+        i++;
+    }
+    if (i >= raw_len)
+    {
+        return -1; // type tag string not null terminated
+    }
+
+    // validate floats
+    for (uint32_t j = msg->idx_type_tag; j < i; j++)
+    {
+        if (raw_buff[j] != 'f')
         {
-            return -1; // chybí type tag string
+            return -1; // unsopported argument type, only floats supported for now
         }
     }
 
-    msg->idx_type_tag = i + 1;
+    i = osc_move4_up(i + 1); // move up to next multiple of 4 after null char
 
-    // iterace zkkrz type targ string dokud nenajdeme null char ^2
-    for (; raw_buff[i] != '\0'; i++)
+    if (i > raw_len)
     {
-        if (i >= raw_len)
-        {
-            return -1; // type tag string not null terminated
-        }
+        return -1; // type tag string padding overflows the raw buffer (should be impossible)
     }
 
-    // iterace zkrz type type tag string padding null chary dokud nenajdeme argument ^3
-    for (; raw_buff[i] == '\0'; i++)
+    msg->idx_args = i; // arguments start after type tag string padding
+
+    i += 4 * (strlen((char *)msg->msg_data + msg->idx_type_tag)); // move i to the end of the arguments, each float is 4 bytes long
+    if (i > raw_len)
     {
-        if (i >= raw_len)
-        {
-            return -1; // chybi argumenty
-        }
+        return -1; // arguments overflow the raw buffer (should be impossible, malformed message)
     }
 
-    msg->idx_args = i;
+    msg->msg_size = i; // now we know the actual size of the message, from start to end of arguments
 
     return msg->msg_size;
 }
