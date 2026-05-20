@@ -11,7 +11,7 @@
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
 #define USB_UART_DEVICE_NODE DT_CHOSEN(zephyr_shell_uart)
 
-#define MSG_SIZE 36
+#define MSG_SIZE 512
 
 /* queues to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
@@ -148,17 +148,19 @@ int main(void)
 	while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
 	{
 		printk("address pattern: %s\n", osc_addr_pattern(&msg));
-		printk("type tag: %s\n", osc_type_tag(&msg));
+		printk("\ttype tag: %s\n", osc_type_tag(&msg));
 
-		for (int i = 0; i < 3; i++)
+		int num_args = osc_num_args(&msg);
+
+		for (int i = 0; i < num_args; i++)
 		{
 			uint32_t raw;
 			memcpy(&raw, osc_args(&msg) + 4*i, 4);
-			raw = sys_be32_to_cpu(raw); // convert from network big-endian to cpu byte order
+			raw = sys_be32_to_cpu(raw); // convert from network big-endian to cpu endian
 
 			float testfloat;
 			memcpy(&testfloat, &raw, 4);
-			printf("argument: %f\n", testfloat); // must use printf instead of printk to print floats
+			printf("\t\targument: %f\n", testfloat); // must use printf instead of printk to print floats
 		}
 	}
 

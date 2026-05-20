@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #define OSC_MSG_MAX_SIZE 512 // bytes
 
@@ -30,4 +31,9 @@ static inline uint8_t *osc_type_tag(osc_msg *msg)
 static inline uint8_t *osc_args(osc_msg *msg)
 {
     return &msg->msg_data[msg->idx_args];
+}
+
+static inline uint32_t osc_num_args(osc_msg *msg)
+{
+    return strlen((char *)osc_type_tag(msg));
 }

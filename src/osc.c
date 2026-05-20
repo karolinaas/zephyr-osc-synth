@@ -1,7 +1,5 @@
 #include "osc.h"
 
-#include <string.h>
-
 // helper function
 static inline uint32_t osc_move4_up(uint32_t idx)
 {
@@ -73,7 +71,7 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
 
     msg->idx_args = i; // arguments start after type tag string padding
 
-    i += 4 * (strlen((char *)msg->msg_data + msg->idx_type_tag)); // move i to the end of the arguments, each float is 4 bytes long
+    i += 4 * osc_num_args(msg); // move i to the end of the arguments, each float is 4 bytes long
     if (i > raw_len)
     {
         return -1; // arguments overflow the raw buffer (should be impossible, malformed message)
