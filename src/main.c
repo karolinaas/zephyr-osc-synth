@@ -9,11 +9,14 @@
 #include <math.h>
 
 #include "osc.h"
+#include "synth.h"
 
 #define MSG_SIZE 512
 
-#define SINE_FREQUENCY 230.6f
-#define AMPLITUDE 16383 // 32767/2 for 16-bit audio
+#define FREQUENCY_MAX_HZ 1000.0f
+#define AMPLITUDE_MAX 16383 // 32767/2 for 16-bit audio
+#define NUM_VOICES_MAX 1 // one for now, will increment later
+#define VOICE_INACTIVE_TIMEOUT_MS 150
 
 /* peripheral DT nodes */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
@@ -42,6 +45,7 @@
 /* queues to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
 K_MSGQ_DEFINE(osc_msgq, sizeof(osc_msg), 10, 4);
+K_MSGQ_DEFINE(synth_evt_msgq, sizeof(struct synth_evt), 10, 4);
 
 /* thread to parse OSC messages from raw UART data */
 void parser_thread(void *, void *, void *);
@@ -60,6 +64,30 @@ static const struct device *const codec_dev = DEVICE_DT_GET(DT_NODELABEL(audio_c
 /* receive buffer used in UART ISR callback */
 static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
+
+static struct synth_voice synth_voices[NUM_VOICES_MAX];
+
+static void synth_update(const struct synth_evt *evt)
+{
+	if (evt->touch_set.finger_idx >= NUM_VOICES_MAX)
+	{
+		printk("invalid finger index\n");
+		return;
+	}
+
+	struct synth_voice *voice = &synth_voices[evt->touch_set.finger_idx];
+
+	// if voice is not active, activate it and initialize phase to 0
+	if (!voice->active)
+	{
+		voice->active = true;
+		voice->phase = 0.0f;
+	}
+
+	voice->frequency = evt->touch_set.frequency;
+	voice->amplitude = evt->touch_set.amplitude;
+	voice->last_update_time_ms = k_uptime_get();
+}
 
 /*
  * Read individual bytes from UART until packet delimiter 0xDEADBEEF is detected.
@@ -141,13 +169,33 @@ void osc_handler_thread(void *, void *, void *)
 
 		for (int i = 0; i < num_args; i++)
 		{
-			uint32_t raw;
-			memcpy(&raw, osc_args(&msg) + 4*i, 4);
-			raw = sys_be32_to_cpu(raw); // convert from network big-endian to cpu endian
+			printf("\t\targument: %f\n", osc_get_arg_float(&msg, i)); // must use printf instead of printk to print floats
+		}
 
-			float testfloat;
-			memcpy(&testfloat, &raw, 4);
-			printf("\t\targument: %f\n", testfloat); // must use printf instead of printk to print floats
+		if (!strcmp((char *)osc_addr_pattern(&msg), "/touch"))
+		{
+			if (num_args != 3)
+			{
+				printk("invalid number of args for /touch, expected 3, instead got %d\n", num_args);
+				continue;
+			}
+
+			float width = osc_get_arg_float(&msg, 1);
+			float height = osc_get_arg_float(&msg, 2);
+
+			/* i really need to figure out a better way to clamp, because i won't understand this mess in a week */
+			width = width < 0.0f ? 0.0f : (width > 1.0f ? 1.0f : width);
+			height = height < 0.0f ? 0.0f : (height > 1.0f ? 1.0f : height);
+
+			struct synth_evt evt;
+
+			evt.type = EVT_TOUCH_SET;
+			evt.touch_set.finger_idx = (uint32_t)osc_get_arg_float(&msg, 0);
+			evt.touch_set.amplitude = width * AMPLITUDE_MAX;
+			evt.touch_set.frequency = height * FREQUENCY_MAX_HZ;
+
+			/* drop when full */
+			k_msgq_put(&synth_evt_msgq, &evt, K_NO_WAIT);
 		}
 	}
 }
@@ -180,23 +228,45 @@ static bool trigger_command(const struct device *i2s_dev_codec, enum i2s_trigger
 	return true;
 }
 
-static void generate_sine(int16_t *buff, size_t num_frames, float freq_hz, float amplitude)
+static void generate_sine(int16_t *buff, size_t num_frames)
 {
-	static float phase = 0.0f; // accumulates phase, static to persist between calls
-	const float phase_increment = M_TWOPI * freq_hz / SAMPLE_FREQUENCY;
-
 	for (size_t i = 0; i < num_frames; i++)
 	{
-		int16_t sample_value = (int16_t)(amplitude * sinf(phase));
+		int16_t sample_value = 0;
+
+		/* sum/mix every active voice */
+		for (int j = 0; j < NUM_VOICES_MAX; j++)
+		{
+			struct synth_voice *voice = &synth_voices[j];
+
+			if (voice->active)
+			{
+				sample_value += (int16_t)(voice->amplitude * sinf(voice->phase));
+				voice->phase += M_TWOPI * voice->frequency / SAMPLE_FREQUENCY;
+
+				/* wrap phase in range 0 to 2*pi */
+				if (voice->phase >= M_TWOPI)
+				{
+					voice->phase -= M_TWOPI;
+				}
+			}
+		}
 
 		buff[i * NUMBER_OF_CHANNELS] = sample_value; // left channel
 		buff[i * NUMBER_OF_CHANNELS + 1] = sample_value; // right channel
+	}
+}
 
-		phase += phase_increment;
+void prune_voices(void)
+{
+	uint64_t now_ms = k_uptime_get();
 
-		if (phase >= M_TWOPI)
+	for (int i = 0; i < NUM_VOICES_MAX; i++)
+	{
+		if (synth_voices[i].active && (now_ms - synth_voices[i].last_update_time_ms > VOICE_INACTIVE_TIMEOUT_MS))
 		{
-			phase -= M_TWOPI; // wrap phase in range 0 to 2*pi
+			synth_voices[i].active = false;
+			printk("voice %d timed out\n", i);
 		}
 	}
 }
@@ -298,7 +368,18 @@ int main(void)
 
 			for (i = 0; i < CONFIG_I2S_INIT_BUFFERS; i++)
 			{
-				generate_sine(sample_buff, FRAMES_PER_BLOCK, SINE_FREQUENCY, AMPLITUDE);
+				struct synth_evt evt;
+
+				/* drain the synth event queue to get the latest message */
+				while (k_msgq_get(&synth_evt_msgq, &evt, K_NO_WAIT) == 0)
+				{
+					synth_update(&evt);
+				}
+
+				/* silence timed out voices */
+				prune_voices();
+
+				generate_sine(sample_buff, FRAMES_PER_BLOCK);
 
 				ret = i2s_buf_write(i2s_dev_codec, sample_buff, BLOCK_SIZE);
 				if (ret < 0)

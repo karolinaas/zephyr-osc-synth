@@ -17,6 +17,8 @@ typedef struct osc_msg
 
 int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len);
 
+float osc_get_arg_float(osc_msg *msg, uint32_t arg_idx);
+
 // accessors for pointer convenience
 static inline uint8_t *osc_addr_pattern(osc_msg *msg)
 {

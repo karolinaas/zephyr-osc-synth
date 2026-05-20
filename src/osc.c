@@ -1,5 +1,7 @@
 #include "osc.h"
 
+#include <zephyr/sys/byteorder.h>
+
 // helper function
 static inline uint32_t osc_move4_up(uint32_t idx)
 {
@@ -80,4 +82,21 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
     msg->msg_size = i; // now we know the actual size of the message, from start to end of arguments
 
     return msg->msg_size;
+}
+
+float osc_get_arg_float(osc_msg *msg, uint32_t arg_idx)
+{
+    if (arg_idx >= osc_num_args(msg))
+    {
+        return 0.0f; // out of bounds, maybe should handle differently?
+    }
+
+    uint32_t raw;
+    memcpy(&raw, osc_args(msg) + 4 * arg_idx, 4); // each float is 4 bytes long
+    raw = sys_be32_to_cpu(raw); // convert from network big-endian to cpu endian
+
+    float value;
+    memcpy(&value, &raw, 4);
+
+    return value;
 }
