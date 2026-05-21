@@ -1,5 +1,25 @@
+#pragma once
+
+#include <zephyr/kernel.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+#define NUM_VOICES_MAX 3
+#define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
+
+#define FREQUENCY_MAX_HZ 1000.0f
+#define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
+
+#define FREQ_SMOOTHING_FACTOR 0.01f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
+#define AMP_SMOOTHING_FACTOR 0.01f
+
+#ifndef SYNTH_PI
+#define SYNTH_PI 3.14159265358979323846f // float because cortex M33 can only do float, has no double hw support
+#endif
+#ifndef SYNTH_TWOPI
+#define SYNTH_TWOPI (SYNTH_PI * 2.0f)
+#endif
 
 enum synth_evt_t
 {
@@ -37,3 +57,7 @@ struct synth_voice
 
     float phase;
 };
+
+void synth_update(const struct synth_evt *evt);
+void generate_sine(int16_t *buff, size_t num_frames, uint32_t sample_frequency, uint8_t num_channels);
+void prune_voices(void);
