@@ -4,6 +4,7 @@
 enum synth_evt_t
 {
     EVT_TOUCH,
+    EVT_TOUCH_RELEASE,
 };
 
 struct synth_evt_touch

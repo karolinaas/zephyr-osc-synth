@@ -18,7 +18,8 @@
 #define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
 #define VOICE_INACTIVE_TIMEOUT_MS 150
 #define FREQ_SMOOTHING_FACTOR 0.001f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
-#define AMP_SMOOTHING_FACTOR 0.005f 
+#define AMP_SMOOTHING_FACTOR 0.005f
+#define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
 
 /* peripheral DT nodes */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
@@ -96,6 +97,21 @@ static void synth_update(const struct synth_evt *evt)
 			voice->target_amplitude = evt->touch.amplitude;
 			voice->last_update_time_ms = k_uptime_get();
 			
+			break;
+		}
+
+		case EVT_TOUCH_RELEASE:
+		{
+			if (evt->touch.finger_idx >= NUM_VOICES_MAX)
+			{
+				printk("invalid finger index\n");
+				return;
+			}
+
+			struct synth_voice *voice = &synth_voices[evt->touch.finger_idx];
+
+			voice->target_amplitude = 0.0f; // ramp down to 0 to avoid clicks
+
 			break;
 		}
 
@@ -201,16 +217,25 @@ void osc_handler_thread(void *, void *, void *)
 			float width = osc_get_arg_float(&msg, 1);
 			float height = osc_get_arg_float(&msg, 2);
 
-			/* i really need to figure out a better way to clamp, because i won't understand this mess in a week */
-			width = width < 0.0f ? 0.0f : (width > 1.0f ? 1.0f : width);
-			height = height < 0.0f ? 0.0f : (height > 1.0f ? 1.0f : height);
-
 			struct synth_evt evt;
-
-			evt.type = EVT_TOUCH;
 			evt.touch.finger_idx = (uint32_t)osc_get_arg_float(&msg, 0);
-			evt.touch.amplitude = width * AMPLITUDE_MAX;
-			evt.touch.frequency = height * FREQUENCY_MAX_HZ;
+
+			if (height < 0.0f || width < 0.0f)
+			{	
+				/* S2O sends negative values for touch release */
+				evt.type = EVT_TOUCH_RELEASE;
+			}
+			else
+			{
+				/* value clamp just in case */
+				width = width > 1.0f ? 1.0f : width;
+				height = height > 1.0f ? 1.0f : height;
+
+				evt.type = EVT_TOUCH;
+				
+				evt.touch.amplitude = width * AMPLITUDE_MAX;
+				evt.touch.frequency = height * FREQUENCY_MAX_HZ;
+			}
 
 			/* drop when full */
 			k_msgq_put(&synth_evt_msgq, &evt, K_NO_WAIT);
@@ -295,10 +320,17 @@ void prune_voices(void)
 
 	for (int i = 0; i < NUM_VOICES_MAX; i++)
 	{
-		if (synth_voices[i].active && (now_ms - synth_voices[i].last_update_time_ms > VOICE_INACTIVE_TIMEOUT_MS))
+		struct synth_voice *voice = &synth_voices[i];
+
+		if (voice->active && (now_ms - voice->last_update_time_ms > VOICE_INACTIVE_TIMEOUT_MS))
 		{
-			synth_voices[i].active = false;
-			printk("voice %d timed out\n", i);
+			voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
+
+			if (voice->current_amplitude < VOICE_PRUNE_AMP_THRESHOLD)
+			{
+				voice->active = false;
+				printk("voice %d timed out\n", i);
+			}
 		}
 	}
 }
@@ -384,6 +416,7 @@ int main(void)
 		{
 			printk("Error setting UART callback: %d\n", ret);
 		}
+
 		return 0;
 	}
 	uart_irq_rx_enable(uart_dev);
