@@ -19,8 +19,8 @@
 #define FREQUENCY_MAX_HZ 1000.0f
 #define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
 
-#define FREQ_SMOOTHING_FACTOR 0.001f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
-#define AMP_SMOOTHING_FACTOR 0.005f
+#define FREQ_SMOOTHING_FACTOR 0.01f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
+#define AMP_SMOOTHING_FACTOR 0.01f
 
 /* peripheral DT nodes */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
@@ -31,13 +31,14 @@
 #define SAMPLE_BIT_WIDTH CONFIG_SAMPLE_WIDTH
 #define BYTES_PER_SAMPLE CONFIG_BYTES_PER_SAMPLE
 #define NUMBER_OF_CHANNELS (2U)
-#define SAMPLES_PER_BLOCK ((SAMPLE_FREQUENCY / 10) * NUMBER_OF_CHANNELS)
-#define INITIAL_BLOCKS    CONFIG_I2S_INIT_BUFFERS
 #define TIMEOUT           (2000U)
 
+#define INITIAL_BLOCKS    CONFIG_I2S_INIT_BUFFERS
+#define BLOCK_DURATION_MS 10
+#define FRAMES_PER_BLOCK (SAMPLE_FREQUENCY * BLOCK_DURATION_MS / 1000)
+#define SAMPLES_PER_BLOCK (FRAMES_PER_BLOCK * NUMBER_OF_CHANNELS)
 #define BLOCK_SIZE  (BYTES_PER_SAMPLE * SAMPLES_PER_BLOCK)
 #define BLOCK_COUNT (INITIAL_BLOCKS + CONFIG_EXTRA_BLOCKS)
-#define FRAMES_PER_BLOCK (SAMPLES_PER_BLOCK / NUMBER_OF_CHANNELS)
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f // float because cortex M33 can only do float, has no double hw support
