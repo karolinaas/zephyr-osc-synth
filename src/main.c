@@ -14,9 +14,11 @@
 #define MSG_SIZE 512
 
 #define FREQUENCY_MAX_HZ 1000.0f
-#define AMPLITUDE_MAX 16383 // 32767/2 for 16-bit audio
-#define NUM_VOICES_MAX 1 // one for now, will increment later
+#define NUM_VOICES_MAX 3 // one for now, will increment later
+#define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
 #define VOICE_INACTIVE_TIMEOUT_MS 150
+#define FREQ_SMOOTHING_FACTOR 0.001f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
+#define AMP_SMOOTHING_FACTOR 0.005f 
 
 /* peripheral DT nodes */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
@@ -69,24 +71,40 @@ static struct synth_voice synth_voices[NUM_VOICES_MAX];
 
 static void synth_update(const struct synth_evt *evt)
 {
-	if (evt->touch_set.finger_idx >= NUM_VOICES_MAX)
+	switch (evt->type)
 	{
-		printk("invalid finger index\n");
-		return;
+		case EVT_TOUCH:
+		{
+			if (evt->touch.finger_idx >= NUM_VOICES_MAX)
+			{
+				printk("invalid finger index\n");
+				return;
+			}
+
+			struct synth_voice *voice = &synth_voices[evt->touch.finger_idx];
+
+			// if voice is not active, activate it and initialize phase to 0
+			if (!voice->active)
+			{
+				voice->active = true;
+				voice->phase = 0.0f;
+				voice->current_frequency = evt->touch.frequency; // start at the target frequency
+				voice->current_amplitude = 0.0f; // ramp up from 0 to avoid clicks
+			}
+
+			voice->target_frequency = evt->touch.frequency;
+			voice->target_amplitude = evt->touch.amplitude;
+			voice->last_update_time_ms = k_uptime_get();
+			
+			break;
+		}
+
+		default:
+		{
+			printk("unsupported event type\n");
+			break;
+		}
 	}
-
-	struct synth_voice *voice = &synth_voices[evt->touch_set.finger_idx];
-
-	// if voice is not active, activate it and initialize phase to 0
-	if (!voice->active)
-	{
-		voice->active = true;
-		voice->phase = 0.0f;
-	}
-
-	voice->frequency = evt->touch_set.frequency;
-	voice->amplitude = evt->touch_set.amplitude;
-	voice->last_update_time_ms = k_uptime_get();
 }
 
 /*
@@ -189,10 +207,10 @@ void osc_handler_thread(void *, void *, void *)
 
 			struct synth_evt evt;
 
-			evt.type = EVT_TOUCH_SET;
-			evt.touch_set.finger_idx = (uint32_t)osc_get_arg_float(&msg, 0);
-			evt.touch_set.amplitude = width * AMPLITUDE_MAX;
-			evt.touch_set.frequency = height * FREQUENCY_MAX_HZ;
+			evt.type = EVT_TOUCH;
+			evt.touch.finger_idx = (uint32_t)osc_get_arg_float(&msg, 0);
+			evt.touch.amplitude = width * AMPLITUDE_MAX;
+			evt.touch.frequency = height * FREQUENCY_MAX_HZ;
 
 			/* drop when full */
 			k_msgq_put(&synth_evt_msgq, &evt, K_NO_WAIT);
@@ -232,7 +250,7 @@ static void generate_sine(int16_t *buff, size_t num_frames)
 {
 	for (size_t i = 0; i < num_frames; i++)
 	{
-		int16_t sample_value = 0;
+		float sample_val_sum = 0;
 
 		/* sum/mix every active voice */
 		for (int j = 0; j < NUM_VOICES_MAX; j++)
@@ -241,8 +259,12 @@ static void generate_sine(int16_t *buff, size_t num_frames)
 
 			if (voice->active)
 			{
-				sample_value += (int16_t)(voice->amplitude * sinf(voice->phase));
-				voice->phase += M_TWOPI * voice->frequency / SAMPLE_FREQUENCY;
+				/* smoothing transitions towards target freq and amp */
+				voice->current_frequency += FREQ_SMOOTHING_FACTOR * (voice->target_frequency - voice->current_frequency);
+				voice->current_amplitude += AMP_SMOOTHING_FACTOR * (voice->target_amplitude - voice->current_amplitude);
+
+				sample_val_sum += voice->current_amplitude * sinf(voice->phase);
+				voice->phase += M_TWOPI * voice->current_frequency / SAMPLE_FREQUENCY;
 
 				/* wrap phase in range 0 to 2*pi */
 				if (voice->phase >= M_TWOPI)
@@ -252,8 +274,18 @@ static void generate_sine(int16_t *buff, size_t num_frames)
 			}
 		}
 
-		buff[i * NUMBER_OF_CHANNELS] = sample_value; // left channel
-		buff[i * NUMBER_OF_CHANNELS + 1] = sample_value; // right channel
+		/* clamp to max amplitude, causes clipping */
+		if (sample_val_sum > INT16_MAX)
+		{
+			sample_val_sum = INT16_MAX;
+		}
+		else if (sample_val_sum < INT16_MIN)
+		{
+			sample_val_sum = INT16_MIN;
+		}
+
+		buff[i * NUMBER_OF_CHANNELS] = (int16_t)sample_val_sum; // left channel
+		buff[i * NUMBER_OF_CHANNELS + 1] = (int16_t)sample_val_sum; // right channel
 	}
 }
 
