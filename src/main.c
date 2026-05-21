@@ -49,13 +49,20 @@
 /* queues to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
 K_MSGQ_DEFINE(osc_msgq, sizeof(osc_msg), 10, 4);
-K_MSGQ_DEFINE(synth_evt_msgq, sizeof(struct synth_evt), 10, 4);
+K_MSGQ_DEFINE(synth_evt_msgq, sizeof(struct synth_evt), 64, 4);
+
+/* counters for dropped messages for diagnostics */
+static volatile uint32_t uart_msgq_dropped;
+static volatile uint32_t osc_msgq_dropped;
+static volatile uint32_t synth_msgq_dropped;
 
 /* thread to parse OSC messages from raw UART data */
 void parser_thread(void *, void *, void *);
 K_THREAD_DEFINE(parser_thread_id, 2048, parser_thread, NULL, NULL, NULL, 5, 0, 0); // may need to adjust priority and stack size
 void osc_handler_thread(void *, void *, void *);
 K_THREAD_DEFINE(osc_handler_thread_id, 2048, osc_handler_thread, NULL, NULL, NULL, 6, 0, 0);
+void diagnostic_thread(void *, void *, void *);
+K_THREAD_DEFINE(diagnostic_thread_id, 1024, diagnostic_thread, NULL, NULL, NULL, 7, 0, 0);
 
 K_MEM_SLAB_DEFINE_IN_SECT_STATIC(mem_slab, __nocache, BLOCK_SIZE, BLOCK_COUNT, 4);
 
@@ -154,8 +161,11 @@ void uart_cb(const struct device *dev, void *user_data)
         {
 			//printk("%x\n", shift_reg);
 
-			/* if queue is full, message is silently dropped */
-			k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
+			/* if queue is full, message is dropped, increment the dropped counter */
+			if (k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT) != 0)
+			{
+				uart_msgq_dropped++;
+			}
 
 			/* reset the buffer position and shift register */
 			rx_buf_pos = 0;
@@ -186,7 +196,11 @@ void parser_thread(void *, void *, void *)
 			continue;
 		}
 
-		/* if queue is full, message is silently dropped */
+		/* if queue is full, message is dropped, increment the dropped counter */
+		if (k_msgq_put(&osc_msgq, &msg, K_NO_WAIT) != 0)
+		{
+			osc_msgq_dropped++;
+		}
 		k_msgq_put(&osc_msgq, &msg, K_NO_WAIT); // maybe it would be more reasonable to wait for space in queue?
 	}
 }
@@ -198,14 +212,14 @@ void osc_handler_thread(void *, void *, void *)
 	/* indefinitely wait for input from UART peripheral */
 	while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
 	{
-		printk("address pattern: %s\n", osc_addr_pattern(&msg));
-		printk("\ttype tag: %s\n", osc_type_tag(&msg));
+		//printk("address pattern: %s\n", osc_addr_pattern(&msg));
+		//printk("\ttype tag: %s\n", osc_type_tag(&msg));
 
 		int num_args = osc_num_args(&msg);
 
 		for (int i = 0; i < num_args; i++)
 		{
-			printf("\t\targument: %f\n", osc_get_arg_float(&msg, i)); // must use printf instead of printk to print floats
+			//printf("\t\targument: %f\n", osc_get_arg_float(&msg, i)); // must use printf instead of printk to print floats
 		}
 
 		if (!strcmp((char *)osc_addr_pattern(&msg), "/touch"))
@@ -239,9 +253,24 @@ void osc_handler_thread(void *, void *, void *)
 				evt.touch.frequency = height * FREQUENCY_MAX_HZ;
 			}
 
-			/* drop when full */
-			k_msgq_put(&synth_evt_msgq, &evt, K_NO_WAIT);
+			k_timeout_t timeout = evt.type == EVT_TOUCH_RELEASE ? K_MSEC(200) : K_NO_WAIT;
+
+			/*  drop when full */
+			if (k_msgq_put(&synth_evt_msgq, &evt, timeout) != 0)
+			{
+				synth_msgq_dropped++;
+			}
 		}
+	}
+}
+
+void diagnostic_thread(void *, void *, void *)
+{
+	while (1)
+	{
+		printk("Dropped queue messages: UART: %u, OSC: %u, Synth: %u\n", uart_msgq_dropped, osc_msgq_dropped, synth_msgq_dropped);
+		printk("Used queue slots: UART: %u, OSC: %u, Synth: %u\n", k_msgq_num_used_get(&uart_msgq), k_msgq_num_used_get(&osc_msgq), k_msgq_num_used_get(&synth_evt_msgq));
+		k_sleep(K_SECONDS(5));
 	}
 }
 
