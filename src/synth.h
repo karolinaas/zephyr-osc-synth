@@ -27,6 +27,7 @@ struct synth_evt
 struct synth_voice
 {
     bool active;
+    bool released;
 
     /* target and current values necessary for smooth transitions*/
     float target_frequency; // target is set by control
@@ -35,6 +36,4 @@ struct synth_voice
     float current_amplitude;
 
     float phase;
-
-    uint64_t last_update_time_ms;
 };

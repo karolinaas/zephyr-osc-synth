@@ -13,13 +13,14 @@
 
 #define MSG_SIZE 512
 
+#define NUM_VOICES_MAX 3
+#define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
+
 #define FREQUENCY_MAX_HZ 1000.0f
-#define NUM_VOICES_MAX 3 // one for now, will increment later
 #define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
-#define VOICE_INACTIVE_TIMEOUT_MS 150
+
 #define FREQ_SMOOTHING_FACTOR 0.001f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
 #define AMP_SMOOTHING_FACTOR 0.005f
-#define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
 
 /* peripheral DT nodes */
 #define UART_DEVICE_NODE DT_NODELABEL(arduino_serial)
@@ -93,9 +94,9 @@ static void synth_update(const struct synth_evt *evt)
 				voice->current_amplitude = 0.0f; // ramp up from 0 to avoid clicks
 			}
 
+			voice->released = false;
 			voice->target_frequency = evt->touch.frequency;
 			voice->target_amplitude = evt->touch.amplitude;
-			voice->last_update_time_ms = k_uptime_get();
 			
 			break;
 		}
@@ -110,6 +111,7 @@ static void synth_update(const struct synth_evt *evt)
 
 			struct synth_voice *voice = &synth_voices[evt->touch.finger_idx];
 
+			voice->released = true;
 			voice->target_amplitude = 0.0f; // ramp down to 0 to avoid clicks
 
 			break;
@@ -316,21 +318,15 @@ static void generate_sine(int16_t *buff, size_t num_frames)
 
 void prune_voices(void)
 {
-	uint64_t now_ms = k_uptime_get();
-
 	for (int i = 0; i < NUM_VOICES_MAX; i++)
 	{
 		struct synth_voice *voice = &synth_voices[i];
 
-		if (voice->active && (now_ms - voice->last_update_time_ms > VOICE_INACTIVE_TIMEOUT_MS))
+		if (voice->active && voice->released && voice->current_amplitude < VOICE_PRUNE_AMP_THRESHOLD)
 		{
 			voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
-
-			if (voice->current_amplitude < VOICE_PRUNE_AMP_THRESHOLD)
-			{
-				voice->active = false;
-				printk("voice %d timed out\n", i);
-			}
+			voice->active = false;
+			voice->released = false;
 		}
 	}
 }
