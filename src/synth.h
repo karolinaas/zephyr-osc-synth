@@ -50,7 +50,7 @@ struct synth_voice
     bool active;
     bool released;
 
-    uint32_t last_update_time_ms;
+    int64_t last_update_time_ms;
 
     /* target and current values necessary for smooth transitions*/
     float target_frequency; // target is set by control

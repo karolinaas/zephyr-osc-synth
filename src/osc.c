@@ -60,7 +60,7 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
     {
         if (raw_buff[j] != 'f')
         {
-            return -1; // unsopported argument type, only floats supported for now
+            return -1; // unsupported argument type, only floats supported for now
         }
     }
 
