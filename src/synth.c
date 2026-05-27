@@ -28,7 +28,8 @@ void synth_update(const struct synth_evt *evt)
 			voice->released = false;
 			voice->target_frequency = evt->touch.frequency;
 			voice->target_amplitude = evt->touch.amplitude;
-			
+			voice->last_update_time_ms = k_uptime_get_32();
+
 			break;
 		}
 
@@ -101,11 +102,42 @@ void generate_sine(int16_t *buff, size_t num_frames, uint32_t sample_frequency, 
 
 void prune_voices(void)
 {
+	uint32_t max_last_update_time_ms = 0;
+	bool any_active = false;
+
 	for (int i = 0; i < NUM_VOICES_MAX; i++)
 	{
 		struct synth_voice *voice = &synth_voices[i];
 
-		if (voice->active && voice->released && voice->current_amplitude < VOICE_PRUNE_AMP_THRESHOLD)
+		if (voice->active && !voice->released)
+		{
+			if (!any_active || voice->last_update_time_ms > max_last_update_time_ms)
+			{
+				max_last_update_time_ms = voice->last_update_time_ms;
+			}
+
+			any_active = true;
+		}
+	}
+
+	for (int i = 0; i < NUM_VOICES_MAX; i++)
+	{
+		struct synth_voice *voice = &synth_voices[i];
+
+		if (!voice->active)
+		{
+			continue;
+		}
+
+		/* if a voice lags behind the most recently updated active voice by more than the timeout, it is probably hanging due to a missed release event */
+		if (!voice->released && any_active && (max_last_update_time_ms - voice->last_update_time_ms > VOICE_GROUP_TIMEOUT_MS))
+		{
+			voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
+			voice->released = true;
+		}
+
+		/* if a voice has been released and its amplitude is below the prune threshold, it is safe to deactivate it */
+		if (voice->released && voice->current_amplitude < VOICE_PRUNE_AMP_THRESHOLD)
 		{
 			voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
 			voice->active = false;

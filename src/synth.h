@@ -7,6 +7,7 @@
 
 #define NUM_VOICES_MAX 3
 #define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
+#define VOICE_GROUP_TIMEOUT_MS 50 // if a voice lags this much behind the rest of voices, it is pruned, helps prevent hanging voices when events are missed
 
 #define FREQUENCY_MAX_HZ 1000.0f
 #define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
@@ -48,6 +49,8 @@ struct synth_voice
 {
     bool active;
     bool released;
+
+    uint32_t last_update_time_ms;
 
     /* target and current values necessary for smooth transitions*/
     float target_frequency; // target is set by control

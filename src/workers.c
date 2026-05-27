@@ -181,6 +181,15 @@ void osc_handler_thread(void *, void *, void *)
 			{
 				synth_msgq_dropped++;
 			}
+
+			if (evt.type == EVT_TOUCH_RELEASE)
+			{
+				printk("RELEASE idx=%u\n", evt.touch.finger_idx);
+			}
+			else
+			{
+				printk("TOUCH   idx=%u\n", evt.touch.finger_idx);
+			}
 		}
 	}
 }
