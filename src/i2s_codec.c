@@ -3,6 +3,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/audio/codec.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(i2s_codec, LOG_LEVEL_INF);
 
 K_MEM_SLAB_DEFINE_IN_SECT_STATIC(mem_slab, __nocache, BLOCK_SIZE, BLOCK_COUNT, 4);
 
@@ -27,7 +30,7 @@ bool configure_tx_streams(const struct device *i2s_dev, struct i2s_config *confi
 
     if (ret < 0)
     {
-        printk("Failed to configure codec stream: %d\n", ret);
+        LOG_ERR("Failed to configure codec stream: %d", ret);
         return false;
     }
 
@@ -39,9 +42,10 @@ bool trigger_command(const struct device *i2s_dev, enum i2s_trigger_cmd cmd)
     int ret;
 
     ret = i2s_trigger(i2s_dev, I2S_DIR_TX, cmd);
+
     if (ret < 0)
     {
-        printk("Failed to trigger command %d on TX: %d\n", cmd, ret);
+        LOG_ERR("Failed to trigger command %d on TX: %d", cmd, ret);
         return false;
     }
 
@@ -64,14 +68,13 @@ bool codec_config(const struct device *codec_dev, struct audio_codec_cfg *config
     config->dai_cfg.i2s.mem_slab = &mem_slab;
     config->dai_cfg.i2s.block_size = BLOCK_SIZE;
 
-
     int ret;
 
     ret = audio_codec_configure(codec_dev, config);
 
     if (ret < 0)
     {
-        printk("Failed to configure codec: %d\n", ret);
+        LOG_ERR("Failed to configure codec: %d", ret);
         return false;
     }
 

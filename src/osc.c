@@ -1,6 +1,9 @@
 #include "osc.h"
 
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(osc, LOG_LEVEL_DBG);
 
 // helper function
 static inline uint32_t osc_move4_up(uint32_t idx)
@@ -26,21 +29,25 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
     {
         i++;
     }
+
     if (i >= raw_len)
     {
-        return -1; // address pattern not null terminated
+        LOG_WRN("Address pattern not null-terminated! Message ignored.");
+        return -1;
     }
 
     i = osc_move4_up(i + 1); // move up to next multiple of 4 after null char
 
     if (i >= raw_len)
     {
-        return -1; // address pattern padding overflows the raw buffer (should be impossible, malformed message)
+        LOG_WRN("Address pattern padding overflows the raw buffer! Should be impossible, malformed message. Message ignored.");
+        return -1;
     }
 
     if (raw_buff[i] != ',')
     {
-        return -1; // missing/malformed type tag string
+        LOG_WRN("Type tag string does not start with ','! Missing or malformed message. Message ignored.");
+        return -1;
     }
 
     msg->idx_type_tag = i + 1; // type tag string starts after ','
@@ -50,8 +57,10 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
     {
         i++;
     }
+
     if (i >= raw_len)
     {
+        LOG_WRN("Type tag string not null-terminated! Missing or malformed message. Message ignored.");
         return -1; // type tag string not null terminated
     }
 
@@ -60,7 +69,8 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
     {
         if (raw_buff[j] != 'f')
         {
-            return -1; // unsupported argument type, only floats supported for now
+            LOG_WRN("Unsupported argument type '%c'! Only floats supported for now. Message ignored.", raw_buff[j]);
+            return -1;
         }
     }
 
@@ -68,15 +78,18 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, uint32_t raw_len)
 
     if (i > raw_len)
     {
-        return -1; // type tag string padding overflows the raw buffer (should be impossible)
+        LOG_WRN("Type tag string padding overflows the raw buffer! Should be impossible, malformed message. Message ignored.");
+        return -1;
     }
 
     msg->idx_args = i; // arguments start after type tag string padding
 
     i += 4 * osc_num_args(msg); // move i to the end of the arguments, each float is 4 bytes long
+    
     if (i > raw_len)
     {
-        return -1; // arguments overflow the raw buffer (should be impossible, malformed message)
+        LOG_WRN("Arguments overflow the raw buffer! Should be impossible, malformed message. Message ignored.");
+        return -1;
     }
 
     msg->msg_size = i; // now we know the actual size of the message, from start to end of arguments

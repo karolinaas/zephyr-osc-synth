@@ -5,15 +5,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define NUM_VOICES_MAX 3
-#define VOICE_PRUNE_AMP_THRESHOLD 1.0f // below this amp voice is pruned
-#define VOICE_GROUP_TIMEOUT_MS 50 // if a voice lags this much behind the rest of voices, it is pruned, helps prevent hanging voices when events are missed
+#define NUM_VOICES_MAX               3
+#define VOICE_PRUNE_AMP_THRESHOLD    1.0f // below this amp voice is pruned
+#define VOICE_GROUP_TIMEOUT_MS       50 // if a voice lags this much behind the rest of voices, it is pruned, helps prevent hanging voices when events are missed
 
-#define FREQUENCY_MAX_HZ 1000.0f
-#define AMPLITUDE_MAX ((float)INT16_MAX / NUM_VOICES_MAX)
+#define FREQUENCY_MAX_HZ             1000.0f
+#define AMPLITUDE_MAX                ((float)INT16_MAX / NUM_VOICES_MAX)
 
-#define FREQ_SMOOTHING_FACTOR 0.01f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
-#define AMP_SMOOTHING_FACTOR 0.01f
+#define FREQ_SMOOTHING_FACTOR        0.01f // between 0 and 1, higher smoothing converges faster, shouldn't be much higher than 0,02
+#define AMP_SMOOTHING_FACTOR         0.01f
 
 #ifndef SYNTH_PI
 #define SYNTH_PI 3.14159265358979323846f // float because cortex M33 can only do float, has no double hw support

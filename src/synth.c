@@ -1,5 +1,9 @@
 #include "synth.h"
 
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(synth, LOG_LEVEL_DBG);
+
 static struct synth_voice synth_voices[NUM_VOICES_MAX];
 
 void synth_update(const struct synth_evt *evt)
@@ -10,7 +14,7 @@ void synth_update(const struct synth_evt *evt)
         {
             if (evt->touch.finger_idx >= NUM_VOICES_MAX)
             {
-                printk("invalid finger index\n");
+                LOG_WRN("Invalid finger index %u (max %d)", evt->touch.finger_idx, NUM_VOICES_MAX - 1);
                 return;
             }
 
@@ -23,6 +27,8 @@ void synth_update(const struct synth_evt *evt)
                 voice->phase = 0.0f;
                 voice->current_frequency = evt->touch.frequency; // start at the target frequency
                 voice->current_amplitude = 0.0f; // ramp up from 0 to avoid clicks
+
+				LOG_DBG("voice %d activated f=%.1f a=%.1f", evt->touch.finger_idx, (double)evt->touch.frequency, (double)evt->touch.amplitude);
             }
 
             voice->released = false;
@@ -37,7 +43,7 @@ void synth_update(const struct synth_evt *evt)
         {
             if (evt->touch.finger_idx >= NUM_VOICES_MAX)
             {
-                printk("invalid finger index\n");
+                LOG_WRN("Invalid finger index %u (max %d)", evt->touch.finger_idx, NUM_VOICES_MAX - 1);
                 return;
             }
 
@@ -46,12 +52,14 @@ void synth_update(const struct synth_evt *evt)
             voice->released = true;
             voice->target_amplitude = 0.0f; // ramp down to 0 to avoid clicks
 
+			LOG_DBG("voice %d released", evt->touch.finger_idx);
+
             break;
         }
 
         default:
         {
-            printk("unsupported event type\n");
+            LOG_WRN("Unsupported event type! Event ignored.");
             break;
         }
     }
@@ -134,6 +142,8 @@ void prune_voices(void)
         {
             voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
             voice->released = true;
+
+			LOG_WRN("Voice %d pruned due to time-out", i);
         }
 
         /* if a voice has been released and its amplitude is below the prune threshold, it is safe to deactivate it */
@@ -142,6 +152,7 @@ void prune_voices(void)
             voice->target_amplitude = 0.0f; // to avoid clicks set target amp to zero
             voice->active = false;
             voice->released = false;
+			LOG_DBG("Voice %d deactivated", i);
         }
     }
 }

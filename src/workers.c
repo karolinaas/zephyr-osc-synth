@@ -2,11 +2,14 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/logging/log.h>
 
 #include <string.h>
 
 #include "osc.h"
 #include "synth.h"
+
+LOG_MODULE_REGISTER(workers, LOG_LEVEL_DBG);
 
 /* queues to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
@@ -54,12 +57,13 @@ static void uart_cb(const struct device *uart_dev, void *user_data)
 
         if (shift_reg == 0xDEADBEEF)
         {
-            //printk("%x\n", shift_reg);
+            LOG_DBG("Shift register matched: 0x%08X", shift_reg);
 
             /* if queue is full, message is dropped, increment the dropped counter */
             if (k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT) != 0)
             {
                 uart_msgq_dropped++;
+                LOG_WRN("UART message queue full. Message dropped.");
             }
 
             /* reset the buffer position and shift register */
@@ -84,15 +88,15 @@ bool workers_init(const struct device *uart_dev)
     {
         if (ret == -ENOTSUP)
         {
-            printk("Interrupt-driven UART API support not enabled\n");
+            LOG_ERR("Interrupt-driven UART API support not enabled");
         }
         else if (ret == -ENOSYS)
         {
-            printk("UART device does not support interrupt-driven API\n");
+            LOG_ERR("UART device does not support interrupt-driven API");
         }
         else
         {
-            printk("Error setting UART callback: %d\n", ret);
+            LOG_ERR("Error setting UART callback: %d", ret);
         }
 
         return false;
@@ -113,16 +117,22 @@ void parser_thread(void *, void *, void *)
     /* indefinitely wait until uart_msgq has data, should use no cpu while waiting */
     while (k_msgq_get(&uart_msgq, &raw_buf, K_FOREVER) == 0)
     {
-        if (osc_parse_message(&msg, (uint8_t *)raw_buf, MSG_SIZE) < 0)
+		int parsed_len = osc_parse_message(&msg, (uint8_t *)raw_buf, MSG_SIZE);
+
+        if (parsed_len < 0)
         {
-            printk("OSC message parse error.\n");
+            LOG_WRN("OSC message parse error. Message ignored.");
+			LOG_HEXDUMP_WRN((uint8_t *)raw_buf, MSG_SIZE, "Raw message data (hex dump):");
             continue;
         }
+
+		LOG_DBG("Parsed OSC message: address pattern: %s, type tag: %s", osc_addr_pattern(&msg), osc_type_tag(&msg));
 
         /* if queue is full, message is dropped, increment the dropped counter */
         if (k_msgq_put(&osc_msgq, &msg, K_NO_WAIT) != 0)
         {
             osc_msgq_dropped++;
+            LOG_WRN("OSC message queue full. Message dropped.");
         }
     }
 }
@@ -134,21 +144,21 @@ void osc_handler_thread(void *, void *, void *)
     /* indefinitely wait for input from UART peripheral */
     while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
     {
-        //printk("address pattern: %s\n", osc_addr_pattern(&msg));
-        //printk("\ttype tag: %s\n", osc_type_tag(&msg));
+        LOG_DBG("address pattern: %s", osc_addr_pattern(&msg));
+        LOG_DBG("\ttype tag: %s", osc_type_tag(&msg));
 
         int num_args = osc_num_args(&msg);
 
         for (int i = 0; i < num_args; i++)
         {
-            //printf("\t\targument: %f\n", osc_get_arg_float(&msg, i)); // must use printf instead of printk to print floats
+            LOG_DBG("\t\targument: %f", (double)osc_get_arg_float(&msg, i));
         }
 
         if (!strcmp((char *)osc_addr_pattern(&msg), "/touch"))
         {
             if (num_args != 3)
             {
-                printk("invalid number of args for /touch, expected 3, instead got %d\n", num_args);
+                LOG_WRN("Invalid number of args for /touch, expected 3, instead got %d", num_args);
                 continue;
             }
 
@@ -181,17 +191,22 @@ void osc_handler_thread(void *, void *, void *)
             if (k_msgq_put(&synth_evt_msgq, &evt, timeout) != 0)
             {
                 synth_msgq_dropped++;
+                LOG_WRN("Synth event queue full. Event dropped.");
             }
 
             if (evt.type == EVT_TOUCH_RELEASE)
             {
-                printk("RELEASE idx=%u\n", evt.touch.finger_idx);
+                LOG_DBG("EVT_TOUCH_RELEASE finger_idx=%u", evt.touch.finger_idx);
             }
             else
             {
-                printk("TOUCH   idx=%u\n", evt.touch.finger_idx);
+                LOG_DBG("EVT_TOUCH         finger_idx=%u", evt.touch.finger_idx);
             }
         }
+		else
+		{
+			LOG_WRN("Unhandled OSC address: %s", osc_addr_pattern(&msg));
+		}
     }
 }
 
@@ -199,8 +214,8 @@ void diagnostic_thread(void *, void *, void *)
 {
     while (1)
     {
-        printk("Dropped queue messages: UART: %u, OSC: %u, Synth: %u\n", uart_msgq_dropped, osc_msgq_dropped, synth_msgq_dropped);
-        printk("Used queue slots: UART: %u, OSC: %u, Synth: %u\n", k_msgq_num_used_get(&uart_msgq), k_msgq_num_used_get(&osc_msgq), k_msgq_num_used_get(&synth_evt_msgq));
+        LOG_INF("Dropped queue messages: UART: %u, OSC: %u, Synth: %u", uart_msgq_dropped, osc_msgq_dropped, synth_msgq_dropped);
+        LOG_INF("Used queue slots: UART: %u, OSC: %u, Synth: %u", k_msgq_num_used_get(&uart_msgq), k_msgq_num_used_get(&osc_msgq), k_msgq_num_used_get(&synth_evt_msgq));
         k_sleep(K_SECONDS(5));
     }
 }
