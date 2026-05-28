@@ -126,7 +126,7 @@ void parser_thread(void *, void *, void *)
             continue;
         }
 
-		LOG_DBG("Parsed OSC message: address pattern: %s, type tag: %s", osc_addr_pattern(&msg), osc_type_tag(&msg));
+		LOG_DBG("Parsed OSC message: address pattern: %s, type tag: %s", osc_addr_pattern(&msg), osc_type_tag_str(&msg));
 
         /* if queue is full, message is dropped, increment the dropped counter */
         if (k_msgq_put(&osc_msgq, &msg, K_NO_WAIT) != 0)
@@ -145,13 +145,13 @@ void osc_handler_thread(void *, void *, void *)
     while (k_msgq_get(&osc_msgq, &msg, K_FOREVER) == 0)
     {
         LOG_DBG("address pattern: %s", osc_addr_pattern(&msg));
-        LOG_DBG("\ttype tag: %s", osc_type_tag(&msg));
+        LOG_DBG("\ttype tag: %s", osc_type_tag_str(&msg));
 
         int num_args = osc_num_args(&msg);
 
         for (int i = 0; i < num_args; i++)
         {
-            LOG_DBG("\t\targument: %f", (double)osc_get_arg_float(&msg, i));
+            LOG_DBG("\t\targument: %f", (double)osc_get_arg_float32(&msg, i));
         }
 
         if (!strcmp((char *)osc_addr_pattern(&msg), "/touch"))
@@ -162,11 +162,11 @@ void osc_handler_thread(void *, void *, void *)
                 continue;
             }
 
-            float width = osc_get_arg_float(&msg, 1);
-            float height = osc_get_arg_float(&msg, 2);
+            float width = osc_get_arg_float32(&msg, 1);
+            float height = osc_get_arg_float32(&msg, 2);
 
             struct synth_evt evt;
-            evt.touch.finger_idx = (uint32_t)osc_get_arg_float(&msg, 0);
+            evt.touch.finger_idx = (uint32_t)osc_get_arg_float32(&msg, 0);
 
             if (height < 0.0f || width < 0.0f)
             {   
