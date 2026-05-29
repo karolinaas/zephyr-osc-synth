@@ -234,6 +234,63 @@ int osc_parse_message(osc_msg *msg, uint8_t *raw_buff, size_t raw_len)
     return msg->msg_size;
 }
 
+int osc_parse_bundle(uint8_t *raw_buff, size_t raw_len, osc_bundle_handler handler, void *cb_data)
+{
+    static osc_msg msg; // reuse same message struct for each message in the bundle
+    size_t offset = 0;
+    int num_elements = 0;
+
+    if (raw_len < sizeof(OSC_BUNDLE_PREFIX) || memcmp(raw_buff, OSC_BUNDLE_PREFIX, sizeof(OSC_BUNDLE_PREFIX)) != 0)
+    {
+        LOG_WRN("Bundle does not start with \"%s\"!", OSC_BUNDLE_PREFIX);
+        return -1;
+    }
+
+    offset += sizeof(OSC_BUNDLE_PREFIX) + 8; // skip bundle prefix and time tag
+
+    if (offset > raw_len)
+    {
+        LOG_WRN("Bundle prefix and time tag overflow the raw buffer!");
+        return -1;
+    }
+
+    while (offset < raw_len)
+    {
+        if (offset + 4 > raw_len)
+        {
+            LOG_WRN("Bundle element size overflows the raw buffer! Malformed bundle.");
+            return -1;
+        }
+
+        int32_t element_size; // int32 defined in osc spec, but should always be positive since it's a size
+        memcpy(&element_size, raw_buff + offset, 4);
+        element_size = sys_be32_to_cpu(element_size);
+
+        if (element_size < 0 || offset + 4 + (size_t)element_size > raw_len)
+        {
+            LOG_WRN("Invalid bundle element size %d! Malformed bundle.", element_size);
+            return -1;
+        }
+
+        offset += 4; // skip element size prefix
+
+        int parsed_msg_size = osc_parse_message(&msg, raw_buff + offset, (size_t)element_size);
+
+        if (parsed_msg_size < 0)
+        {
+            LOG_WRN("Failed to parse message in bundle!");
+            return -1;
+        }
+
+        handler(&msg, cb_data); // call handler for this message
+
+        offset += (size_t)element_size; // move to next element
+        num_elements++;
+    }
+
+    return num_elements;
+}
+
 uint8_t osc_get_arg_type(osc_msg *msg, uint32_t arg_idx)
 {
     if (arg_idx >= osc_num_args(msg))
@@ -346,4 +403,12 @@ const uint8_t *osc_get_arg_blob(osc_msg *msg, uint32_t arg_idx, size_t *out_blob
     }
 
     return osc_args(msg) + offset + 4; // data starts after the 4 byte size prefix
+}
+
+uint64_t osc_bundle_get_time_tag(uint8_t *raw_buff)
+{
+    uint64_t time_tag;
+    memcpy(&time_tag, raw_buff + sizeof(OSC_BUNDLE_PREFIX), 8);
+
+    return sys_be64_to_cpu(time_tag);
 }
